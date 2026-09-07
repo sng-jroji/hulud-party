@@ -41,7 +41,7 @@ COMPROMISED_NAMESPACES=(
     "@yoobic"
 )
 
-readonly GREP_EXCLUDES=(
+GREP_EXCLUDES=(
     --exclude-dir=".git"
     --exclude-dir="node_modules"
     --exclude="*.md"
@@ -59,6 +59,7 @@ readonly C_RED C_GREEN C_YELLOW C_BLUE C_BOLD C_RESET
 
 # === Global Variables ===
 TEMP_DIR=""
+WARN_ONLY=0
 
 # --- Logging & Utilities ---
 error() { echo -e "${C_RED}${C_BOLD}ERROR:${C_RESET} $1" >&2; exit 1; }
@@ -347,8 +348,7 @@ generate_report() {
         high_risk=$((high_risk + $(echo "$correlated_exfil" | wc -l | tr -d ' ')))
     fi
     if [[ -n "$workflows" ]]; then
-        report+="${C_RED}🚨 HIGH RISK: Malicious Workflow Files Detected${C_RESET}\n${workflows}\n\n"
-        high_risk=$((high_risk + $(echo "$workflows" | wc -l | tr -d ' ')))
+        report+="${C_BLUE}ℹ️ INFO: CI/CD Workflow Files Detected${C_RESET}\n${workflows}\n   NOTE: CI/CD workflow files found in the project. Manual review recommended to verify integrity.\n\n"
     fi
      if [[ -n "$versions" ]]; then
         report+="${C_RED}🚨 HIGH RISK: Compromised Package Versions Detected${C_RESET}\n$(echo "$versions" | sed 's/^/   - Package: /')\n   NOTE: These specific package versions are known to be compromised.\n\n"
@@ -387,7 +387,12 @@ generate_report() {
         echo -e "   Medium Risk Issues: $medium_risk"
         echo -e "   Total Actionable Issues: $total_issues"
         echo -e "=============================================="
-        return 2
+        if [[ "$high_risk" -eq 0 ]] && [[ "$WARN_ONLY" -eq 1 ]]; then
+            echo -e "   [!] Exiting with 0 because --warn-only is active and no High Risk issues were found."
+            return 0
+        else
+            return 2
+        fi
     else
         echo -e "\n-----------------------------------------------------"
         info "${C_GREEN}✅ No actionable project integrity issues found.${C_RESET}"
@@ -400,6 +405,28 @@ generate_report() {
 # --- Main Orchestrator ---
 main() {
     check_dependencies
+
+    local positional_args=()
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --exclude-dir=*)
+                GREP_EXCLUDES+=("--exclude-dir=${1#*=}")
+                shift
+                ;;
+            --warn-only)
+                WARN_ONLY=1
+                shift
+                ;;
+            *)
+                positional_args+=("$1")
+                shift
+                ;;
+        esac
+    done
+
+    # Restore positional arguments
+    set -- "${positional_args[@]}"
+
     local project_path="${1:-.}"; project_path=$(realpath "$project_path")
     [[ -d "$project_path" ]] || error "Project directory not found at: $project_path"
     info "Scanning project at: $project_path"
