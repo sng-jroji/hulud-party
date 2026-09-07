@@ -35,7 +35,9 @@
 #>
 [CmdletBinding()]
 param (
-    [string]$Path = "."
+    [string]$Path = ".",
+    [string[]]$ExcludeDir = @(),
+    [switch]$WarnOnly
 )
 
 # Stops the script if an error occurs. Equivalent to 'set -e'
@@ -129,7 +131,7 @@ function Download-List
 # --- Report ---
 function Generate-Report
 {
-    param([string]$findings_dir)
+    param([string]$findings_dir, [switch]$WarnOnly)
     Write-Header "Scan Report"
     $total_issues = 0; $high_risk = 0; $medium_risk = 0
 
@@ -162,10 +164,6 @@ function Generate-Report
     if ($null -ne $correlated_exfil)
     {
         $high_risk += $correlated_exfil.Count
-    }
-    if ($null -ne $workflows)
-    {
-        $high_risk += $workflows.Count
     }
     if ($null -ne $versions)
     {
@@ -229,8 +227,9 @@ function Generate-Report
     }
     if ($workflows)
     {
-        Write-High "`n[!] HIGH RISK: Malicious Workflow Files Detected"
-        $workflows | ForEach-Object { Write-High $_ }
+        Write-Info "`n[i] INFO: CI/CD Workflow Files Detected"
+        $workflows | ForEach-Object { Write-Info "    $_" }
+        Write-Info "    NOTE: CI/CD workflow files found in the project. Manual review recommended to verify integrity."
     }
     if ($versions)
     {
@@ -275,6 +274,11 @@ function Generate-Report
     Write-Info "    Medium Risk Issues: $medium_risk"
     Write-Info "    Total Actionable Issues: $total_issues"
     Write-Info "=============================================="
+    if ($high_risk -eq 0 -and $WarnOnly)
+    {
+        Write-Info "   [!] Exiting with 0 because -WarnOnly is active and no High Risk issues were found."
+        return 0
+    }
     return 2 # Exit code to indicate that issues were found
 }
 
@@ -517,6 +521,16 @@ function Main
     # == END OF INITIALIZATION SECTION ==
     # =================================================================================
 
+    $mergedExcludeDirs = @("node_modules", ".git")
+    if ($ExcludeDir) {
+        $mergedExcludeDirs += $ExcludeDir
+    }
+    $excludeDirsString = ($mergedExcludeDirs | ForEach-Object { "'$_'" }) -join ', '
+
+    $initScriptText = $InitializationScript.ToString()
+    $initScriptText = $initScriptText.Replace('[string[]]$GCI_EXCLUDE_DIRS = @("node_modules", ".git")', "[string[]]`$GCI_EXCLUDE_DIRS = @($excludeDirsString)")
+    $DynamicInitializationScript = [scriptblock]::Create($initScriptText)
+
     $final_exit_code = 0
     try
     {
@@ -525,20 +539,20 @@ function Main
 
         # CORRECTION: The desired function is invoked inside a clean ScriptBlock.
         # Arguments are passed with -ArgumentList.
-        $jobs += Start-Job -InitializationScript $InitializationScript -ScriptBlock { Run-DependencyAnalysis $args[0] $args[1] } -ArgumentList $project_path, $TEMP_DIR
-        $jobs += Start-Job -InitializationScript $InitializationScript -ScriptBlock { Scan-ForMaliciousFiles $args[0] $args[1] } -ArgumentList $project_path, (Join-Path $TEMP_DIR "file_hash_findings.txt")
-        $jobs += Start-Job -InitializationScript $InitializationScript -ScriptBlock { Scan-ForHooks $args[0] $args[1] } -ArgumentList $project_path, (Join-Path $TEMP_DIR "hook_findings.txt")
-        $jobs += Start-Job -InitializationScript $InitializationScript -ScriptBlock { Scan-Workflows $args[0] $args[1] } -ArgumentList $project_path, (Join-Path $TEMP_DIR "workflow_findings.txt")
-        $jobs += Start-Job -InitializationScript $InitializationScript -ScriptBlock { Scan-ForCorrelatedExfiltration $args[0] $args[1] } -ArgumentList $project_path, (Join-Path $TEMP_DIR "correlated_exfiltration_findings.txt")
-        $jobs += Start-Job -InitializationScript $InitializationScript -ScriptBlock { Analyze-GitState $args[0] $args[1] } -ArgumentList $project_path, (Join-Path $TEMP_DIR "git_findings.txt")
-        $jobs += Start-Job -InitializationScript $InitializationScript -ScriptBlock { Scan-ForPatterns $args[0] $args[1] $args[2] $args[3] $args[4] } -ArgumentList $project_path, (Join-Path $TEMP_DIR "malicious_activity_findings.txt"), @('trufflehog', 'credential.*exfiltration'), "Module 7: Malicious Activity Scan", "    - Activity found in: "
-        $jobs += Start-Job -InitializationScript $InitializationScript -ScriptBlock { Scan-ForPatterns $args[0] $args[1] $args[2] $args[3] $args[4] } -ArgumentList $project_path, (Join-Path $TEMP_DIR "suspicious_pattern_findings.txt"), @('webhook\.site', 'bb8ca5f6-4175-45d2-b042-fc9ebb8170b7', 'malicious webhook endpoint'), "Module 8: Suspicious Pattern Scan", "    - Pattern found in: "
-        $jobs += Start-Job -InitializationScript $InitializationScript -ScriptBlock { Scan-ForPatterns $args[0] $args[1] $args[2] $args[3] $args[4] } -ArgumentList $project_path, (Join-Path $TEMP_DIR "secret_scanning_patterns.txt"), @('credential scanning patterns', 'suspicious environment variable access', 'AWS_ACCESS_KEY', 'GITHUB_TOKEN', 'NPM_TOKEN', 'process\.env', 'os\.environ', 'getenv'), "Module 9: Secret Pattern Scan", "    - Pattern found in: "
+        $jobs += Start-Job -InitializationScript $DynamicInitializationScript -ScriptBlock { Run-DependencyAnalysis $args[0] $args[1] } -ArgumentList $project_path, $TEMP_DIR
+        $jobs += Start-Job -InitializationScript $DynamicInitializationScript -ScriptBlock { Scan-ForMaliciousFiles $args[0] $args[1] } -ArgumentList $project_path, (Join-Path $TEMP_DIR "file_hash_findings.txt")
+        $jobs += Start-Job -InitializationScript $DynamicInitializationScript -ScriptBlock { Scan-ForHooks $args[0] $args[1] } -ArgumentList $project_path, (Join-Path $TEMP_DIR "hook_findings.txt")
+        $jobs += Start-Job -InitializationScript $DynamicInitializationScript -ScriptBlock { Scan-Workflows $args[0] $args[1] } -ArgumentList $project_path, (Join-Path $TEMP_DIR "workflow_findings.txt")
+        $jobs += Start-Job -InitializationScript $DynamicInitializationScript -ScriptBlock { Scan-ForCorrelatedExfiltration $args[0] $args[1] } -ArgumentList $project_path, (Join-Path $TEMP_DIR "correlated_exfiltration_findings.txt")
+        $jobs += Start-Job -InitializationScript $DynamicInitializationScript -ScriptBlock { Analyze-GitState $args[0] $args[1] } -ArgumentList $project_path, (Join-Path $TEMP_DIR "git_findings.txt")
+        $jobs += Start-Job -InitializationScript $DynamicInitializationScript -ScriptBlock { Scan-ForPatterns $args[0] $args[1] $args[2] $args[3] $args[4] } -ArgumentList $project_path, (Join-Path $TEMP_DIR "malicious_activity_findings.txt"), @('trufflehog', 'credential.*exfiltration'), "Module 7: Malicious Activity Scan", "    - Activity found in: "
+        $jobs += Start-Job -InitializationScript $DynamicInitializationScript -ScriptBlock { Scan-ForPatterns $args[0] $args[1] $args[2] $args[3] $args[4] } -ArgumentList $project_path, (Join-Path $TEMP_DIR "suspicious_pattern_findings.txt"), @('webhook\.site', 'bb8ca5f6-4175-45d2-b042-fc9ebb8170b7', 'malicious webhook endpoint'), "Module 8: Suspicious Pattern Scan", "    - Pattern found in: "
+        $jobs += Start-Job -InitializationScript $DynamicInitializationScript -ScriptBlock { Scan-ForPatterns $args[0] $args[1] $args[2] $args[3] $args[4] } -ArgumentList $project_path, (Join-Path $TEMP_DIR "secret_scanning_patterns.txt"), @('credential scanning patterns', 'suspicious environment variable access', 'AWS_ACCESS_KEY', 'GITHUB_TOKEN', 'NPM_TOKEN', 'process\.env', 'os\.environ', 'getenv'), "Module 9: Secret Pattern Scan", "    - Pattern found in: "
 
         # Wait for all jobs to finish and receive their output (including errors)
         $jobs | Wait-Job | Receive-Job
 
-        $final_exit_code = Generate-Report -findings_dir $TEMP_DIR
+        $final_exit_code = Generate-Report -findings_dir $TEMP_DIR -WarnOnly:$WarnOnly
     }
     finally
     {

@@ -49,6 +49,11 @@ Or locally:
     ./scan-project.sh /path/to/project
     ```
 
+### Advanced Options (Linux/macOS/WSL)
+
+*   `--exclude-dir=DIR_NAME`: Dynamically excludes a directory from searching (e.g. `--exclude-dir=dist` or `--exclude-dir=coverage`). You can specify this flag multiple times.
+*   `--warn-only`: Prevents the scanner from failing (exiting with code `2`) if only **Medium Risk** findings are detected. High/Critical risks will still cause an exit code of `2`.
+
 Of course. This is a critical piece of documentation that sets clear expectations for the tool's capabilities. It needs
 to be direct and unambiguous.
 
@@ -85,6 +90,11 @@ If you are on Windows and prefer to use the PowerShell version of the scanner (`
     ```powershell
     .\scan-project.ps1 -Path "C:\path\to\project"
     ```
+
+### Advanced Options (PowerShell)
+
+*   `-ExcludeDir "DIR1", "DIR2"`: Excludes the specified directory names from searching.
+*   `-WarnOnly`: Prevents the scanner from failing (exiting with code `2`) if only **Medium Risk** findings are detected. High/Critical risks will still cause an exit code of `2`.
 
 5. **Exit codes:**
 
